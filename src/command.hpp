@@ -4,8 +4,13 @@
 #include "util.hpp"
 
 #define COMMAND_TYPE_SIZE       2
-#define TEST    0
-#define BTST    1
+#define LOG         0
+#define BROAD       1
+#define USR_DCN     2
+#define USR_CON     3
+#define GAME        4
+#define USR_NAME    5
+#define USR_ID      6
 
 #define COMMAND_TYPE(c) (*((uint16_t *) c))
 #define SET_COMMAND_TYPE(c, t) (*((uint16_t *) c)) = t
@@ -25,43 +30,96 @@ typedef uint16_t CMD_LENGTH;
 
 class Game;
 
+enum CmdTarget {GM, PLAYER, BOTH};
+
 class Command {
-protected:
-    uint32_t _id;
-
-    static uint32_t currentId;
-
 public:
     virtual ~Command () {}
 
+    virtual CmdTarget target () = 0;
     virtual void execute (Game * game) = 0;
     virtual void toString (char * buffer) = 0;
 
     static Command * commandFromString (const char * str);
 };
 
-class TestCommand : public Command {
+class LogCommand : public Command {
 private:
     char * _message;
 
 public:
-    TestCommand (const char * message, uint32_t id);
-    TestCommand (const char * message);
-    ~TestCommand ();
+    LogCommand (const char * message);
+    ~LogCommand ();
 
+    CmdTarget target () { return BOTH; }
     virtual void execute (Game * game);
     virtual void toString (char * buffer);
 };
 
-class BroadcastTestCommand : public Command {
+class BroadcastCommand : public Command {
 private:
-    char * _message;
+    Command * _command;
 
 public:
-    BroadcastTestCommand (const char * message, uint32_t id);
-    BroadcastTestCommand (const char * message);
-    ~BroadcastTestCommand ();
+    BroadcastCommand (Command * command) : _command (command) {}
+    ~BroadcastCommand ();
 
+    CmdTarget target () { return GM; }
+    virtual void execute (Game * game);
+    virtual void toString (char * buffer);
+};
+
+class UserConnectivityCommand : public Command {
+private:
+    bool        _connected;
+    uint16_t    _publicID;
+    char        _name[MAX_NAME_SIZE+1];
+
+public:
+    UserConnectivityCommand (bool connected, uint16_t publicID, const char * name);
+    UserConnectivityCommand (bool connected, uint16_t publicID);
+
+    CmdTarget target () { return PLAYER; }
+    virtual void execute (Game * game);
+    virtual void toString (char * buffer);
+};
+
+class GameSetupCommand : public Command {
+private:
+    uint32_t    _privateID;
+    uint16_t    _publicID;
+
+public:
+    GameSetupCommand (uint32_t privateID, uint16_t publicID, const char * str);
+
+    uint32_t privateID () { return _privateID; }
+    uint16_t publicID () { return _publicID; }
+
+    CmdTarget target () { return PLAYER; }
+    virtual void execute (Game * game);
+    virtual void toString (char * buffer);
+};
+
+class UserNameCommand : public Command {
+private:
+    char    _name [MAX_NAME_SIZE+1];
+
+public:
+    UserNameCommand (const char * name);
+
+    CmdTarget target () { return GM; }
+    virtual void execute (Game * game);
+    virtual void toString (char * buffer);
+};
+
+class UserIDCommand : public Command {
+private:
+    uint32_t    _privateID;
+
+public:
+    UserIDCommand (uint32_t privateID) : _privateID (privateID) {}
+
+    CmdTarget target () { return GM; }
     virtual void execute (Game * game);
     virtual void toString (char * buffer);
 };

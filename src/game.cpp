@@ -29,7 +29,9 @@ void Game::mainLoop () {
     for (;;) {
         Command * c = this->_commandQueue.getCommand ();
 
-        c->execute (this);
+        CmdTarget t = c->target ();
+        if (t == BOTH || (t == GM && this->_isGM) || (t == PLAYER && !this->_isGM))
+            c->execute (this);
 
         delete c;
         // TODO: notify GUI
@@ -40,11 +42,15 @@ void Game::pushCommand (Command * c) {
     this->_commandQueue.pushCommand (c);
 }
 
-GMGame::GMGame () {
+void loadState (GameSetupCommand * command) {
+    // TODO: read fields from command and update
+}
+
+GMGame::GMGame () : _isGM (true) {
     this->_nwAdapter = new GMNetworkAdapter (this);
 }
 
-GMGame::GMGame (uint16_t port) {
+GMGame::GMGame (uint16_t port) : _isGM (true) {
     this->_nwAdapter = new GMNetworkAdapter (this, port);
 }
 
@@ -54,15 +60,14 @@ uint32_t GMGame::createObject (IndexedObj * obj) {
     return this->_objectId++;
 }
 
-void GMGame::broadcastMessage (const char * message) {
-    TestCommand c (message);
-    ((GMNetworkAdapter *) this->_nwAdapter)->broadcastCommand (&c);
+void GMGame::broadcastCommand (Command * command) {
+    ((GMNetworkAdapter *) this->_nwAdapter)->broadcastCommand (command);
 }
 
-PGame::PGame (const char * serverName, uint16_t serverPort) {
+PGame::PGame (const char * serverName, uint16_t serverPort) : _isGM (false) {
     this->_nwAdapter = new PNetworkAdapter (this, serverName, serverPort);
 }
 
-void PGame::broadcastMessage (const char * message) {
-    error ("Player is not allowed to broadcast a message.");
+void PGame::broadcastCommand (Command * command) {
+    error ("Player is not allowed to broadcast a method.");
 }

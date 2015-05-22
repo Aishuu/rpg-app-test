@@ -36,6 +36,9 @@ Command * NetworkAdapter::receiveCommand (SOCKET s) {
     }
 
     Command * c = Command::commandFromString (buffer);
+    // FIXME: raise error instead
+    if (c == NULL)
+        c = new BadCommandSyntax ();
 
     return c;
 }
@@ -134,7 +137,8 @@ void GMNetworkAdapter::monitorCommands () {
             if (i == MAX_PLAYERS)
                 error ("Couldn't match reconnecting player.");
 
-            debug (DBG_BASE, "New player connected assigned ID %d.", i);
+            Command * c = new UserConnectivityCommand (true);
+            this->_game->pushCommand (c);
 
         } else {
             for (i=0; i < MAX_PLAYERS; i++) {
@@ -143,13 +147,14 @@ void GMNetworkAdapter::monitorCommands () {
                 if (this->_players[i].isConnected() && (s = this->_players[i].getSock()) && FD_ISSET (s, &rdfs)) {
                     Command * c = receiveCommand (s);
 
-                    // FIXME: c may be null if command type is unknown
                     if (c == NULL) {
                         this->_players[i].disconnect ();
-                        debug (DBG_BASE, "Player ID %d disconnected.", i);
+                        c = new UserConnectivityCommand (false);
                     }
-                    else
-                        this->_game->pushCommand (c);
+
+                    // FIXME: c may be BadCommand. Deal with 
+                    this->_game->pushCommand (c);
+
                     break;
                 }
             }

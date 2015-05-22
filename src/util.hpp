@@ -7,7 +7,10 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#define MAX_PLAYERS 10
+#define MAX_PLAYERS     10
+#define MAX_NAME_SIZE   20
+
+#define VALID_NAME_CHAR (c) ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '*')
 
 typedef char DebugLvl;
 #define DBG_NONE    0

@@ -15,6 +15,7 @@ private:
 protected:
     std::map<uint32_t, IndexedObj *>    _objects;
     NetworkAdapter                      * _nwAdapter;
+    bool                                _isGM;
 
     void mainLoop ();
 
@@ -22,12 +23,14 @@ public:
     virtual ~Game ();
 
     NetworkAdapter * nwAdapter () { return _nwAdapter; }
+    bool isGM () { return _isGM; }
     IndexedObj * getIndexedObj (uint32_t id);
     void createObject (uint32_t id, IndexedObj * obj);
     void start ();
     void pushCommand (Command * c);
 
-    virtual void broadcastMessage (const char * message) = 0;
+    virtual void broadcastCommand (Command * command) = 0;
+    void loadState (GameSetupCommand * command);
 };
 
 class GMGame: public Game {
@@ -39,14 +42,14 @@ public:
     GMGame (uint16_t port);
     uint32_t createObject (IndexedObj * obj);
 
-    void broadcastMessage (const char * message);
+    void broadcastMessage (Command * command);
 };
 
 class PGame: public Game {
 public:
     PGame (const char * serverName, uint16_t serverPort);
 
-    void broadcastMessage (const char * message);
+    void broadcastMessage (Command * command);
 };
 
 #endif // GAME_HPP
