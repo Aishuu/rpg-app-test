@@ -1,11 +1,15 @@
-#include "player.hpp"
+#include <string.h>
 
-uint16_t Player::idPlayers = 0;
+#include "player.hpp"
 
 Player::Player () : _status (NOONE) {};
 
-void Player::connect (uint16_t id, SOCKET sock) {
-    this->_id = id;
+bool Player::isConnected () { return _status == CONNECTED; }
+bool Player::isPresent () { return _status != NOONE; }
+
+void Player::connect (const char * name, SOCKET sock) {
+    strncpy (this->_name, name, MAX_NAME_SIZE);
+    this->_name[MAX_NAME_SIZE] = 0;
     this->_sock = sock;
     this->_status = CONNECTED;
 }
@@ -19,7 +23,8 @@ void Player::disconnect () {
 void Player::reset () {
     if (this->_status == CONNECTED)
         closesocket (this->_sock);
-    this->_id = 0;
+    this->_privateID = 0;
+    this->_publicID = 0;
     this->_sock = 0;
     this->_status = NOONE;
 }
@@ -29,3 +34,28 @@ void Player::reconnect (SOCKET sock) {
     this->_status = CONNECTED;
 }
 
+void ShadowPlayer::waitName (SOCKET sock) {
+    if (this->_status == FREE) {
+        this->_sock = sock;
+        this->_status = WAIT_NAME;
+    }
+}
+
+void ShadowPlayer::waitID (Player * player) {
+    if (this->_status == WAIT_NAME) {
+        this->_player = player;
+        this->_status = WAIT_ID;
+    } else
+        this->clear ();
+}
+
+void ShadowPlayer::closeSocket () {
+    if (this->_status != FREE)
+        closesocket (this->_sock);
+}
+
+void ShadowPlayer::clear () {
+    this->_status = FREE;
+    this->_sock = 0;
+    this->_player = NULL;
+}

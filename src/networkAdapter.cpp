@@ -1,5 +1,6 @@
 #include "networkAdapter.hpp"
 #include "game.hpp"
+#include "exceptions.hpp"
 
 NetworkAdapter::NetworkAdapter (Game * game) : _game (game) {
 #ifdef WIN32
@@ -35,10 +36,10 @@ Command * NetworkAdapter::receiveCommand (SOCKET s) {
         receivedB += n;
     }
 
-    Command * c = Command::commandFromString (buffer);
+    Command * c = Command::commandFromString (s, buffer);
     // FIXME: raise error instead
     if (c == NULL)
-        c = new BadCommandSyntax ();
+        throw bad_command_error (true, 0);
 
     return c;
 }
@@ -96,14 +97,10 @@ void GMNetworkAdapter::closeSocket () {
     if (this->_listening) {
         closesocket (this->_serverSocket);
         this->_listening = false;
-    
-        int i;
-        for (i=0; i<MAX_PLAYERS; i++)
-            this->_players[i].reset();
     }
 }
 
-void GMNetworkAdapter::monitorCommands () {
+void GMNetworkAdapter::monitorCommands (Player * players) {
     fd_set rdfs;
     short i;
     
@@ -112,8 +109,11 @@ void GMNetworkAdapter::monitorCommands () {
         
         FD_SET (this->_serverSocket, &rdfs);
         for (i=0; i<MAX_PLAYERS; i++)
-            if (this->_players[i].isConnected())
-                FD_SET (this->_players[i].getSock(), &rdfs);
+            if (players[i].isConnected())
+                FD_SET (players[i].getSock(), &rdfs);
+        for (i=0; i<MAX_PLAYERS; i++)
+            if (this->_shadowPlayers[i].isConnected())
+                FD_SET (this->_shadowPlayers[i].sock(), &rdfs);
 
         if (select (this->_maxSocket + 1, &rdfs, NULL, NULL, NULL) == -1)
             error("select()");
@@ -128,32 +128,48 @@ void GMNetworkAdapter::monitorCommands () {
             if (csock > this->_maxSocket)
                 this->_maxSocket = csock;
 
-            // TODO: take into account reconnection
             for (i=0; i<MAX_PLAYERS; i++)
-                if (!this->_players[i].isPresent ()) {
-                    this->_players[i].connect (Player::newId (), csock);
+                if (!this->_shadowPlayers[i].isConnected ()) {
+                    this->_shadowPlayers[i].waitName (csock);
                     break;
                 }
             if (i == MAX_PLAYERS)
-                error ("Couldn't match reconnecting player.");
-
-            Command * c = new UserConnectivityCommand (true);
-            this->_game->pushCommand (c);
+                error ("Couldn't accept new player.");
 
         } else {
             for (i=0; i < MAX_PLAYERS; i++) {
                 SOCKET s = 0;
 
-                if (this->_players[i].isConnected() && (s = this->_players[i].getSock()) && FD_ISSET (s, &rdfs)) {
-                    Command * c = receiveCommand (s);
+                if (players[i].isConnected() && (s = players[i].getSock()) && FD_ISSET (s, &rdfs)) {
+                    try {
+                        Command * c = receiveCommand (s);
 
-                    if (c == NULL) {
-                        this->_players[i].disconnect ();
-                        c = new UserConnectivityCommand (false);
+                        if (c == NULL) {
+                            players[i].disconnect ();
+                            this->_game->broadcastCommand (new UserConnectivityCommand (false, players[i].publicID ()));
+                            debug (DBG_BASE, "User %s has been disconnected.", players[i].name ());
+                        } else
+                                this->_game->pushCommand (c);
+
+                    } catch (const bad_command_error & e) {
+                        warning (e.what ());
                     }
 
-                    // FIXME: c may be BadCommand. Deal with 
-                    this->_game->pushCommand (c);
+                    break;
+                }
+
+                if (this->_shadowPlayers[i].isConnected() && (s = this->_shadowPlayers[i].sock()) && FD_ISSET (s, &rdfs)) {
+                    try {
+                        Command * c = receiveCommand (s);
+
+                        if (c == NULL)
+                            this->_shadowPlayers[i].clear ();
+                        else
+                            this->_game->pushCommand (c);
+
+                    } catch (const bad_command_error & e) {
+                        warning (e.what ());
+                    }
 
                     break;
                 }
@@ -162,22 +178,27 @@ void GMNetworkAdapter::monitorCommands () {
     }
 }
 
-void GMNetworkAdapter::sendCommand (uint16_t playerID, Command * c) {
-    short i;
-    for (i=0; i<MAX_PLAYERS; i++)
-        if (this->_players[i].isConnected () && this->_players[i].getId () == playerID) {
-            this->sendCommandOnSock (c, this->_players[i].getSock ());
-            break;
-        }
-    if (i == MAX_PLAYERS)
-        warning ("Couldn't find player with ID %d.", playerID);
+void GMNetworkAdapter::sendCommand (Player * p, Command * c) {
+    if (p->isConnected ())
+        this->sendCommandOnSock (c, p->getSock ());
+    else
+        warning ("Couldn't send command since player is disconnected.");
 }
 
-void GMNetworkAdapter::broadcastCommand (Command * c) {
+void GMNetworkAdapter::broadcastCommandExcept (Command * c, Player * players, Player * p) {
     short i;
     for (i=0; i<MAX_PLAYERS; i++)
-        if (this->_players[i].isConnected ())
-            this->sendCommandOnSock (c, this->_players[i].getSock ());
+        if (players[i].isConnected () && &(players[i]) != p)
+            this->sendCommandOnSock (c, players[i].getSock ());
+}
+
+ShadowPlayer * GMNetworkAdapter::getShadowPlayerFromSock (SOCKET sock) {
+    short i;
+    for (i=0; i<MAX_PLAYERS; i++)
+        if (this->_shadowPlayers[i].sock () == sock)
+            return &(this->_shadowPlayers[i]);
+
+    return NULL;
 }
 
 PNetworkAdapter::PNetworkAdapter (Game * game, const char * serverName, uint16_t serverPort) : NetworkAdapter (game), _serverName (serverName), _serverPort (serverPort), _connected (false) {
@@ -189,23 +210,24 @@ PNetworkAdapter::~PNetworkAdapter () {
 }
 
 void PNetworkAdapter::connectToServer () {
+    // TODO: change errors to exceptions
     struct hostent *hostinfo = NULL;
     SOCKADDR_IN sin = { 0 };
 
     this->_sock = socket(AF_INET, SOCK_STREAM, 0);
     if(this->_sock == INVALID_SOCKET)
-        error ("Error when invoking socket()");
+        throw network_error ("Error when invoking socket()");
 
     hostinfo = gethostbyname(this->_serverName);
     if (hostinfo == NULL)
-        error ("Unknown host %s.", this->_serverName);
+        throw network_error ("Unknown host");
 
     sin.sin_addr = *(IN_ADDR *) hostinfo->h_addr;
     sin.sin_port = htons(this->_serverPort);
     sin.sin_family = AF_INET;
 
     if (connect(this->_sock, (SOCKADDR *) &sin, sizeof(SOCKADDR)) == SOCKET_ERROR)
-        error ("Error when invoking connect()");
+        throw network_error ("Error when invoking connect()");
 
     this->_connected = true;
 }
@@ -218,17 +240,48 @@ void PNetworkAdapter::closeSocket () {
 }
 
 void PNetworkAdapter::monitorCommands () {
+    PGame * game = (PGame *) this->_game;
     for (;;) {
-        Command * c = this->receiveCommand (this->_sock);
+        try {
+            Command * c = this->receiveCommand (this->_sock);
 
-        if (c != NULL)
-            this->_game->pushCommand (c);
-        else
-            error ("Connection to server lost.");
-        // FIXME: else connection lost ?
+            if (c != NULL)
+                game->pushCommand (c);
+            else {
+                warning ("Connection to server lost.");
+                game->reconnecting ();
+                this->_connected = false;
+                int i = 0;
+                while (! this->_connected) {
+                    usleep (SERVER_RECONNECTION_DELAY);
+                    // TODO: c'etait pour se marrer
+                    i += SERVER_RECONNECTION_DELAY;
+                    printf ("\r");
+                    int j;
+                    for (j=0; j<(i/1000000)%5; j++)
+                        printf (" ");
+                    printf (".     ");
+                    fflush (stdout);
+                    try {
+                        this->connectToServer ();
+                    } catch (const network_error & e) {
+                        //warning (e.what ());
+                    }
+                }
+                printf ("\r");
+                UserNameCommand c (this->_sock, game->playerMe ()->name ());
+                this->sendCommandToServer (&c);
+                UserIDCommand cc (0, game->playerMe ()->privateID ());
+                this->sendCommandToServer (&cc);
+                game->reconnected ();
+            }
+
+        } catch (const bad_command_error & e) {
+            warning (e.what ());
+        }
     }
 }
 
-void PNetworkAdapter::sendCommand (Command * c) {
+void PNetworkAdapter::sendCommandToServer (Command * c) {
     this->sendCommandOnSock (c, this->_sock);
 }

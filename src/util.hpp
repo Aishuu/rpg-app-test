@@ -7,10 +7,11 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#define MAX_PLAYERS     10
-#define MAX_NAME_SIZE   20
+#define MAX_PLAYERS                 10
+#define MAX_NAME_SIZE               20
+#define SERVER_RECONNECTION_DELAY   500000
 
-#define VALID_NAME_CHAR (c) ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '*')
+#define VALID_NAME_CHAR(__c) ((__c >= 'A' && __c <= 'Z') || (__c >= 'a' && __c <= 'z') || (__c >= '0' && __c <= '9') || __c == '_' || __c == '*')
 
 typedef char DebugLvl;
 #define DBG_NONE    0

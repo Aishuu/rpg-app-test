@@ -20,8 +20,9 @@ Command * Command::commandFromString (SOCKET from, const char * str) {
         {
             if (l >= COMMAND_LENGTH_SIZE + COMMAND_TYPE_SIZE) {
                 Command * innerC = Command::commandFromString (from, COMMAND_PAYLOAD (str));
-                if (c != NULL)
+                if (innerC != NULL) {
                     c = new BroadcastCommand (innerC);
+                }
             }
             if (c == NULL)
                 warning ("Bad syntax for BROAD.");
@@ -49,8 +50,8 @@ Command * Command::commandFromString (SOCKET from, const char * str) {
         case GAME:
             if (l > 6) {
                 uint32_t privateID = *((uint32_t *) COMMAND_PAYLOAD (str));
-                uint32_t publicID = *((uint16_t *) COMMAND_PAYLOAD (str) + 4);
-                c = new GameSetupCommand (privateID, publicID, COMMAND_PAYLOAD (str)+6);
+                uint16_t publicID = *((uint16_t *) COMMAND_PAYLOAD (str) + 4);
+                c = new GameSetupCommand (privateID, publicID, *(COMMAND_PAYLOAD (str)+6));
             }
             else
                 warning ("Bad syntax for USR_CON.");
@@ -82,7 +83,6 @@ Command * Command::commandFromString (SOCKET from, const char * str) {
 }
 
 LogCommand::LogCommand (const char * message) {
-    this->_id = id;
     size_t l = strlen (message);
     this->_message = (char *) malloc (sizeof (char) * (l+1));
     strncpy (this->_message, message, l);
@@ -95,7 +95,7 @@ LogCommand::~LogCommand () {
 }
 
 void LogCommand::execute (Game * game) {
-    debug ("%s", this->_message);
+    debug (DBG_ALL, "%s", this->_message);
 }
 
 void LogCommand::toString (char * buffer) {
@@ -113,7 +113,7 @@ void LogCommand::toString (char * buffer) {
 
 BroadcastCommand::~BroadcastCommand () {
     if (this->_command)
-        free (this->_command);
+        delete this->_command;
 }
 
 void BroadcastCommand::execute (Game * game) {
@@ -131,11 +131,7 @@ void BroadcastCommand::toString (char * buffer) {
 
     SET_COMMAND_TYPE (buffer, BROAD);
 
-    size_t l = strlen (this->_message);
-    if (l > COMMAND_PAYLOAD_SIZE - 1)
-        l = COMMAND_PAYLOAD_SIZE - 1;
-
-    strncpy (COMMAND_PAYLOAD(buffer), buffer_tmp, l + COMMAND_LENGTH_SIZE + COMMAND_TYPE_SIZE);
+    memcpy (COMMAND_PAYLOAD(buffer), buffer_tmp, l + COMMAND_LENGTH_SIZE + COMMAND_TYPE_SIZE);
 
     SET_COMMAND_LENGTH (buffer, l + COMMAND_LENGTH_SIZE + COMMAND_TYPE_SIZE);
 }
@@ -149,9 +145,9 @@ UserConnectivityCommand::UserConnectivityCommand (bool connected, uint16_t publi
 
 void UserConnectivityCommand::execute (Game * game) {
     if (this->_connected)
-        game->newUser (this->_publicID, this->_name);
+        game->newPlayer (this->_publicID, this->_name);
     else
-        game->userDC (this->_publicID);
+        game->playerDC (this->_publicID);
 }
 
 void UserConnectivityCommand::toString (char * buffer) {
@@ -167,16 +163,86 @@ void UserConnectivityCommand::toString (char * buffer) {
         SET_COMMAND_TYPE (buffer, USR_DCN);
 }
 
-GameSetupCommand::GameSetupCommand (uint32_t privateID, uint16_t publicID, const char * str) : _privateID (privateID), _publicID (publicID) {
+GameSetupCommand::GameSetupCommand (uint32_t privateID, uint16_t publicID, char fieldTest) : _privateID (privateID), _publicID (publicID), _fieldTest (fieldTest) {
     // TODO init fields
 }
 
 void GameSetupCommand::execute (Game * game) {
+    ((PGame *) game)->createMe (this->_privateID, this->_publicID);
     game->loadState (this);
 }
 
 void GameSetupCommand::toString (char * buffer) {
     // TODO: set this according to fields' values
     SET_COMMAND_TYPE (buffer, GAME);
-    SET_COMMAND_LENGTH (buffer, 0);
+    SET_COMMAND_LENGTH (buffer, 7);
+    *((uint32_t *) COMMAND_PAYLOAD (buffer)) = this->_privateID;
+    *((uint16_t *) COMMAND_PAYLOAD (buffer) + 4) = this->_publicID;
+    *(COMMAND_PAYLOAD (buffer) + 6) = this->_fieldTest;
+}
+
+UserNameCommand::UserNameCommand (SOCKET shadowSocket, const char * name) : _shadowSocket (shadowSocket) {
+    strncpy (this->_name, name, MAX_NAME_SIZE);
+    this->_name [MAX_NAME_SIZE] = 0;
+}
+
+void UserNameCommand::execute (Game * game) {
+    if (! game->isGM ())
+        return;
+    GMGame * gmgame = (GMGame *) game;
+
+    Player * player = gmgame->getPlayerByName (this->_name);
+    ShadowPlayer * shadowPlayer = gmgame->getShadowPlayerBySock (this->_shadowSocket);
+    if (shadowPlayer == NULL) {
+        warning ("Got a USR_NAME command from a ghost.");
+        return;
+    }
+
+    if (player == NULL) {
+        player = gmgame->createPlayerFromShadow (shadowPlayer, this->_name);
+        if (player != NULL) {
+            UserConnectivityCommand c (true, player->publicID (), player->name ());
+            gmgame->broadcastCommandExcept (&c, player);
+            gmgame->sendStateToPlayer (player);
+        } else
+            shadowPlayer->closeSocket ();
+
+        shadowPlayer->clear ();
+    } else
+        shadowPlayer->waitID (player);
+}
+
+void UserNameCommand::toString (char * buffer) {
+    SET_COMMAND_TYPE (buffer, USR_NAME);
+
+    size_t l = strlen (this->_name);
+    if (l > MAX_NAME_SIZE) l = MAX_NAME_SIZE;
+    SET_COMMAND_LENGTH (buffer, l);
+
+    strncpy (COMMAND_PAYLOAD (buffer), this->_name, l);
+}
+
+void UserIDCommand::execute (Game * game) {
+    if (! game->isGM ())
+        return;
+    ShadowPlayer * shadowPlayer = ((GMGame *) game)->getShadowPlayerBySock (this->_shadowSocket);
+    if (shadowPlayer == NULL)
+        return;
+    Player * player = shadowPlayer->getPlayer ();
+    if (player == NULL)
+        return;
+
+    if (player->privateID () == this->_privateID) {
+        player->reconnect (this->_shadowSocket);
+        UserConnectivityCommand c (true, player->publicID (), player->name ());
+        game->broadcastCommandExcept (&c, player);
+    }
+
+    shadowPlayer->clear ();
+}
+
+void UserIDCommand::toString (char * buffer) {
+    SET_COMMAND_TYPE (buffer, USR_ID);
+    SET_COMMAND_LENGTH (buffer, 4);
+    *((uint32_t *) COMMAND_PAYLOAD (buffer)) = this->_privateID;
 }

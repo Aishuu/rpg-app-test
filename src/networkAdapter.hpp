@@ -18,17 +18,15 @@ protected:
 public:
     NetworkAdapter (Game * game);
     virtual ~NetworkAdapter ();
-    
-    virtual void monitorCommands () = 0;
 };
 
 class GMNetworkAdapter: public NetworkAdapter {
 private:
-    uint16_t    _port;
-    SOCKET      _serverSocket;
-    Player      _players [MAX_PLAYERS];
-    SOCKET      _maxSocket;
-    bool        _listening;
+    uint16_t        _port;
+    SOCKET          _serverSocket;
+    SOCKET          _maxSocket;
+    bool            _listening;
+    ShadowPlayer    _shadowPlayers[MAX_PLAYERS];
 
     void setupNetwork ();
     void closeSocket ();
@@ -39,9 +37,10 @@ public:
     ~GMNetworkAdapter ();
 
     uint16_t port () { return _port; }
-    virtual void monitorCommands ();
-    void sendCommand (uint16_t playerID, Command * c);
-    void broadcastCommand (Command * c);
+    virtual void monitorCommands (Player * players);
+    void sendCommand (Player * p, Command * c);
+    void broadcastCommandExcept (Command * c, Player players[], Player * p);
+    ShadowPlayer * getShadowPlayerFromSock (SOCKET sock);
 };
 
 class PNetworkAdapter: public NetworkAdapter {
@@ -60,6 +59,7 @@ public:
 
     virtual void monitorCommands ();
     void sendCommand (Command * c);
+    void sendCommandToServer (Command * c);
 };
 
 #endif // NETWORK_ADAPTER_HPP

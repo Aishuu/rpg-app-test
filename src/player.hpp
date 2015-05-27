@@ -4,30 +4,53 @@
 #include "util.hpp"
 #include "network.hpp"
 
-enum Status {CONNECTED, DISCONNECTED, NOONE};
-
 class Player {
 private:
+    enum Status {CONNECTED, DISCONNECTED, NOONE};
     Status      _status;
-    uint16_t    _id;
-    SOCKET      _sock;
 
-    static uint16_t idPlayers;
+    uint16_t    _publicID;
+    uint32_t    _privateID;
+    SOCKET      _sock;
+    char        _name [MAX_NAME_SIZE+1];
 
 public:
     Player ();
 
-    uint16_t getId () { return _id; }
+    uint16_t publicID () { return _publicID; }
+    uint32_t privateID () { return _privateID; }
     SOCKET getSock () { return _sock; }
-    bool isConnected () { return _status == CONNECTED; }
-    bool isPresent () { return _status != NOONE; }
+    char * name () { return _name; }
+    bool isConnected ();
+    bool isPresent ();
+    void setPrivateID (uint32_t privateID) { _privateID = privateID; }
+    void setPublicID (uint16_t publicID) { _publicID = publicID; }
 
-    void connect (uint16_t id, SOCKET sock);
+    void connect (const char * name, SOCKET sock);
+    void reconnect (SOCKET sock);
     void disconnect ();
     void reset ();
-    void reconnect (SOCKET sock);
+};
 
-    static uint16_t newId () { return idPlayers++; }
+class ShadowPlayer {
+private:
+    Player          * _player;
+    SOCKET          _sock;
+
+    enum ShadowStatus {FREE, WAIT_NAME, WAIT_ID};
+    ShadowStatus    _status;
+
+public:
+    ShadowPlayer () : _player (NULL), _sock (0), _status (FREE) {}
+
+    SOCKET sock () { return _sock; }
+    Player * getPlayer () { return _player; }
+    bool isConnected () { return _status != FREE; }
+
+    void waitName (SOCKET sock);
+    void waitID (Player * player);
+    void closeSocket ();
+    void clear ();
 };
 
 #endif // PLAYER_HPP

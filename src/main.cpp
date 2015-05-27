@@ -3,13 +3,23 @@
 #include "util.hpp"
 #include "game.hpp"
 
-void testCommand (Game * game) {
-    int i;
-    for (i=0; i<100; i++) {
-        BroadcastTestCommand * c = new BroadcastTestCommand ("test");
-        game->pushCommand (c);
-        sleep (2);
-    }
+int client (Game * game) {
+    debug (DBG_BASE, "Client started.");
+    printf ("Please enter a name (max %d): ", MAX_NAME_SIZE);
+    fflush (stdout);
+    game->start ();
+    delete game;
+
+    return 0;
+}
+
+int server (Game * game) {
+    debug (DBG_BASE, "Server started on port %d.", ((GMNetworkAdapter *) game->nwAdapter())->port());
+
+    game->start ();
+    delete game;
+
+    return 0;
 }
 
 int main (int argc, char ** argv) {
@@ -24,11 +34,7 @@ int main (int argc, char ** argv) {
 
     if (argc == 3) {
         game = new PGame (argv[1], atoi(argv[2]));
-        debug (DBG_BASE, "Client started.");
-        game->start ();
-        delete game;
-
-        return 0;
+        return client (game);
     }
 
     if (argc == 2)
@@ -36,11 +42,5 @@ int main (int argc, char ** argv) {
     else
         game = new GMGame ();
 
-    debug (DBG_BASE, "Server started on port %d.", ((GMNetworkAdapter *) game->nwAdapter())->port());
-
-    std::thread test (testCommand, game);
-    game->start ();
-    delete game;
-
-    return 0;
+    return server (game);
 }

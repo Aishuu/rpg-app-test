@@ -2,6 +2,7 @@
 #define COMMAND_HPP
 
 #include "util.hpp"
+#include "network.hpp"
 
 #define COMMAND_TYPE_SIZE       2
 #define LOG         0
@@ -40,7 +41,7 @@ public:
     virtual void execute (Game * game) = 0;
     virtual void toString (char * buffer) = 0;
 
-    static Command * commandFromString (const char * str);
+    static Command * commandFromString (SOCKET from, const char * str);
 };
 
 class LogCommand : public Command {
@@ -88,9 +89,10 @@ class GameSetupCommand : public Command {
 private:
     uint32_t    _privateID;
     uint16_t    _publicID;
+    char        _fieldTest;
 
 public:
-    GameSetupCommand (uint32_t privateID, uint16_t publicID, const char * str);
+    GameSetupCommand (uint32_t privateID, uint16_t publicID, char fieldTest);
 
     uint32_t privateID () { return _privateID; }
     uint16_t publicID () { return _publicID; }
@@ -103,9 +105,10 @@ public:
 class UserNameCommand : public Command {
 private:
     char    _name [MAX_NAME_SIZE+1];
+    SOCKET  _shadowSocket;
 
 public:
-    UserNameCommand (const char * name);
+    UserNameCommand (SOCKET shadowSocket, const char * name);
 
     CmdTarget target () { return GM; }
     virtual void execute (Game * game);
@@ -114,10 +117,11 @@ public:
 
 class UserIDCommand : public Command {
 private:
+    SOCKET      _shadowSocket;
     uint32_t    _privateID;
 
 public:
-    UserIDCommand (uint32_t privateID) : _privateID (privateID) {}
+    UserIDCommand (SOCKET shadowSocket, uint32_t privateID) : _shadowSocket (shadowSocket), _privateID (privateID) {}
 
     CmdTarget target () { return GM; }
     virtual void execute (Game * game);
